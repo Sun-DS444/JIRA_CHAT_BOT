@@ -251,7 +251,7 @@ if st.session_state.messages and st.session_state.messages[-1]["role"] == "user"
             SELECT ticketid,title,description,status
             FROM jira_tickets
             ORDER BY embedding <-> '{vector_str}'::vector
-            LIMIT 5;
+            LIMIT 5000;
         """)
         results = cur.fetchall()
         cur.close()
