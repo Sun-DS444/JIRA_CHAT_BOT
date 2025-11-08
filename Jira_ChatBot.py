@@ -62,7 +62,7 @@ st.sidebar.markdown("### 📂 Upload Jira CSV/Excel (Admin Only)")
 uploaded_file = st.sidebar.file_uploader("", type=["csv", "xlsx"], label_visibility="collapsed")
 
 # ------------------------------------------------
-# BACKGROUND ANIMATION (REALISTIC STAR-GAZING EFFECT)
+# BACKGROUND ANIMATION (STAR EFFECT)
 # ------------------------------------------------
 theme = st.session_state.theme
 colors = THEME_COLORS[theme]
@@ -73,18 +73,15 @@ sidebar_bg = colors["sidebar"]
 
 animated_css = f"""
 <style>
-/* Animated star-gazing background */
 @keyframes skyFlow {{
   0% {{ background-position: 0% 50%; }}
   50% {{ background-position: 100% 50%; }}
   100% {{ background-position: 0% 50%; }}
 }}
-
 @keyframes twinkle {{
   0%, 100% {{ opacity: 0.8; }}
   50% {{ opacity: 1; }}
 }}
-
 [data-testid="stAppViewContainer"] {{
     background: radial-gradient(ellipse at bottom, #020111 0%, #000000 100%), {bg};
     background-size: 200% 200%;
@@ -92,7 +89,6 @@ animated_css = f"""
     color: {fg};
     position: relative;
 }}
-
 [data-testid="stAppViewContainer"]::before {{
     content: "";
     position: fixed;
@@ -106,13 +102,11 @@ animated_css = f"""
     animation: twinkle 4s infinite ease-in-out alternate;
     z-index: 0;
 }}
-
 [data-testid="stSidebar"] {{
     background-color: {sidebar_bg} !important;
     color: {fg} !important;
     z-index: 10;
 }}
-
 .model-status {{
     position: fixed;
     top: 15px;
@@ -125,18 +119,15 @@ animated_css = f"""
     box-shadow: 0 0 15px rgba(0,0,0,0.4);
     z-index: 999;
 }}
-
 h1, p, label {{
     color: {fg} !important;
 }}
-
 .stButton>button {{
     background: linear-gradient(135deg,{accent},#00b4d8);
     color: white;
     font-weight: 600;
     border-radius: 8px;
 }}
-
 input {{
     background-color: rgba(255,255,255,0.1);
     color: white;
@@ -146,7 +137,6 @@ input {{
 </style>
 <div class="model-status">✅ AI model ready!</div>
 """
-
 st.markdown(animated_css, unsafe_allow_html=True)
 
 # ------------------------------------------------
@@ -165,12 +155,13 @@ if uploaded_file:
             df.rename(columns={'Summary': 'Title'}, inplace=True)
         if 'Description' not in df.columns:
             df['Description'] = ''
-        if 'TicketID' not in df.columns:
-            df['TicketID'] = df.index.astype(str)
+        if 'Issue key' not in df.columns and 'Issue_key' not in df.columns:
+            df['Issue key'] = df.index.astype(str)
         if 'Status' not in df.columns:
             df['Status'] = 'Unknown'
 
-        df = df.drop_duplicates(subset=['TicketID'])
+        # Drop duplicates and prepare embeddings
+        df = df.drop_duplicates(subset=['Issue key'])
         texts = (df['Title'].fillna('') + ' ' + df['Description'].fillna('')).tolist()
         embeddings = model.encode(texts, show_progress_bar=False)
 
@@ -179,7 +170,7 @@ if uploaded_file:
         cur.execute("CREATE EXTENSION IF NOT EXISTS vector;")
         cur.execute("""
             CREATE TABLE IF NOT EXISTS jira_tickets (
-                ticketid TEXT PRIMARY KEY,
+                issue_key TEXT PRIMARY KEY,
                 title TEXT,
                 description TEXT,
                 embedding VECTOR(384),
@@ -189,15 +180,15 @@ if uploaded_file:
         conn.commit()
 
         records = [
-            (str(df.iloc[i]['TicketID']), str(df.iloc[i]['Title']), str(df.iloc[i]['Description']),
+            (str(df.iloc[i]['Issue key']), str(df.iloc[i]['Title']), str(df.iloc[i]['Description']),
              str(df.iloc[i]['Status']), embeddings[i].tolist())
             for i in range(len(df))
         ]
 
         execute_values(cur, """
-            INSERT INTO jira_tickets (ticketid,title,description,status,embedding)
+            INSERT INTO jira_tickets (issue_key,title,description,status,embedding)
             VALUES %s
-            ON CONFLICT (ticketid) DO UPDATE SET
+            ON CONFLICT (issue_key) DO UPDATE SET
                 title=EXCLUDED.title,
                 description=EXCLUDED.description,
                 status=EXCLUDED.status,
@@ -236,7 +227,6 @@ with st.form(key="input_form", clear_on_submit=True):
 
 if send and user_input:
     st.session_state.messages.append({"role": "user", "content": user_input})
-    # st.experimental_return()
     st.rerun()
 
 if st.session_state.messages and st.session_state.messages[-1]["role"] == "user":
@@ -247,7 +237,7 @@ if st.session_state.messages and st.session_state.messages[-1]["role"] == "user"
         query_embedding = model.encode([prompt])[0]
         vector_str = "[" + ",".join(map(str, query_embedding.tolist())) + "]"
         cur.execute(f"""
-            SELECT ticketid,title,description,status
+            SELECT issue_key,title,description,status
             FROM jira_tickets
             ORDER BY embedding <-> '{vector_str}'::vector
             LIMIT 5;
@@ -257,7 +247,7 @@ if st.session_state.messages and st.session_state.messages[-1]["role"] == "user"
         conn.close()
 
         if results:
-            df_display = pd.DataFrame(results, columns=["TicketID", "Title", "Description", "Status"])
+            df_display = pd.DataFrame(results, columns=["Issue Key", "Title", "Description", "Status"])
             df_display["Description"] = df_display["Description"].astype(str).str.slice(0, 180) + "..."
             st.session_state.messages.append({"role": "assistant", "content": "Here are similar Jira tickets found."})
             st.markdown("**Assistant:** Here are similar Jira tickets found.")
